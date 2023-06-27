@@ -2,7 +2,6 @@ import argparse
 import collections
 import copy
 import os
-import sys
 
 import joblib
 import numpy
@@ -39,6 +38,36 @@ BINARY_CLASSIFICATION = True
 NORMALIZE = True
 # verbosity level
 VERBOSE = 1
+# random state
+RANDOM_STATE = 43
+
+
+# Classifiers to be tested. The model should be able to be dumped with joblib
+def get_classifiers():
+    return {'dt': DecisionTreeClassifier(),
+            'g_nb': GaussianNB(),
+            'm_nb': MultinomialNB(),
+            'b_nb': BernoulliNB(),
+            'lda': LinearDiscriminantAnalysis(),
+            'rf_100': RandomForestClassifier(n_estimators=100),
+            'rf_30': RandomForestClassifier(n_estimators=30),
+            'rf_10': RandomForestClassifier(n_estimators=10),
+            'gb_100': GradientBoostingClassifier(n_estimators=100),
+            'gb_30': GradientBoostingClassifier(n_estimators=30),
+            'gb_10': GradientBoostingClassifier(n_estimators=10),
+            'sgd': SGDClassifier(),
+            'mlp': Perceptron(),
+            'lr': LogisticRegression(),
+            'st_stat': StackingClassifier(estimators=[('nb', GaussianNB()),
+                                                      ('lda', LinearDiscriminantAnalysis()),
+                                                      ('lr', LogisticRegression())],
+                                          final_estimator=DecisionTreeClassifier()),
+            'tree_stat': StackingClassifier(estimators=[('dt', DecisionTreeClassifier()),
+                                                        ('rf', RandomForestClassifier(n_estimators=10)),
+                                                        ('gb', GradientBoostingClassifier(n_estimators=10))],
+                                            final_estimator=LinearDiscriminantAnalysis()),
+            }
+
 
 if __name__ == '__main__':
     """
@@ -84,25 +113,25 @@ if __name__ == '__main__':
 
     if VERBOSE > 0:
         print('-----------------------------------------------------------------------')
-        print('               Testing Anomaly Detectors for the ARANCINO')
+        print('        Training and testing Anomaly Detectors for the ARANCINO')
         print('                  MODE: %s classification' % ('binary' if BINARY_CLASSIFICATION else 'multiclass'))
         print('-----------------------------------------------------------------------\n')
 
     if not os.path.exists(MODELS_FOLDER):
-        print('models folder %s does not exist. Exiting' % MODELS_FOLDER)
-        sys.exit(1)
+        os.makedirs(MODELS_FOLDER)
 
     OUT_FILE = str(current_ms()) + '_output.csv'
     with open(OUT_FILE, 'w') as f:
-        f.write('clf,train_dataset,test_dataset,test_size,an_perc,test_time,acc,mcc\n')
+        f.write(
+            'clf,train_dataset,train_size,train_time,model_size,train_an_perc,test_dataset,test_size,test_an_perc,test_time,acc,mcc\n')
 
     for file in os.listdir(DATASETS_FOLDER):
         if file.endswith(".csv"):
-            df_name = file.replace('.csv', '')
+            train_dataset_name = file.replace('.csv', '')
             df = pandas.read_csv(os.path.join(DATASETS_FOLDER, file))
             df = df.drop(columns=[TIMESTAMP_TAG])
             if VERBOSE > 0:
-                print('Dataset %s: %d rows and %d columns' % (df_name, len(df.index), len(df.columns)))
+                print('Dataset %s: %d rows and %d columns' % (train_dataset_name, len(df.index), len(df.columns)))
 
             x_train, x_test, y_train, y_test = \
                 ms.train_test_split(df.drop(columns=LABEL_NAME),
@@ -114,35 +143,47 @@ if __name__ == '__main__':
             if NORMALIZE:
                 normalizer = MinMaxScaler()
                 normalizer.fit(x_train, y_train)
+                x_train = normalizer.transform(x_train)
                 x_test = normalizer.transform(x_test)
 
-            x_train = None
-            y_train = None
             df = None
 
-            an_perc = (len([ele for ele in y_test if ele != 'normal'])) / len(y_test) * 100.0
+            train_an_perc = (len([ele for ele in y_train if ele != 'normal'])) / len(y_train) * 100.0
+            test_an_perc = (len([ele for ele in y_test if ele != 'normal'])) / len(y_test) * 100.0
 
             # Training and Testing Classifiers
-            for model_file in os.listdir(MODELS_FOLDER):
-                if model_file.endswith('.joblib'):
-                    clf_name = model_file.replace('.joblib', '').split('@')[0].strip()
-                    train_dataset = model_file.replace('.joblib', '').split('@')[1].strip()
-                    model_path = os.path.join(MODELS_FOLDER, model_file)
-                    try:
-                        clf = joblib.load(model_path)
-                        if clf is None:
-                            print('Something went wrong when loading the file')
-                        else:
-                            start_time = current_ms()
-                            y_pred = clf.predict(x_test)
-                            test_time = current_ms() - start_time
-                            print('Testing %s/%s on %s: MCC=%.2f' %
-                                  (clf_name, train_dataset, df_name, metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)))
+            for (clf_name, clf) in get_classifiers().items():
+                if VERBOSE > 0:
+                    print('\nTraining classifier %s' % clf_name)
 
-                            with open(OUT_FILE, 'a') as f:
-                                f.write(clf_name + ',' + train_dataset + ',' + df_name + ',' + str(len(y_test))
-                                        + ',' + str(an_perc) + ',' + str(test_time) + ','
-                                        + str(metrics.accuracy_score(y_true=y_test, y_pred=y_pred))
-                                        + ',' + str(metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)) + '\n')
-                    except:
-                        print('Something went wrong when loading the file')
+                start_ms = current_ms()
+                clf.fit(x_train, y_train)
+                train_time = current_ms() - start_ms
+
+                if VERBOSE > 0:
+                    print('Dumping on file')
+
+                # Dump, reload and measure the size of the model
+                model_path = os.path.join(MODELS_FOLDER, clf_name + '@' + train_dataset_name + '.joblib')
+                joblib.dump(clf, model_path, compress=9)
+                model_size = -1 if not os.path.exists(model_path) else os.stat(model_path).st_size
+                try:
+                    clf = joblib.load(model_path)
+                    if clf is None or model_size == -1:
+                        print('Something went wrong when saving the file')
+                    else:
+                        start_time = current_ms()
+                        y_pred = clf.predict(x_test)
+                        test_time = current_ms() - start_time
+                        print('Testing %s/%s: MCC=%.2f' %
+                              (clf_name, train_dataset_name, metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)))
+
+                        with open(OUT_FILE, 'a') as f:
+                            f.write(clf_name + ',' + train_dataset_name + ',' + str(len(y_train)) + ',' + str(
+                                train_time) + ','
+                                    + str(model_size) + ',' + str(train_an_perc) + ',' + train_dataset_name
+                                    + ',' + str(len(y_test)) + ',' + str(test_an_perc) + ',' + str(test_time) + ','
+                                    + str(metrics.accuracy_score(y_true=y_test, y_pred=y_pred))
+                                    + ',' + str(metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)) + '\n')
+                except:
+                    print('Something went wrong when saving the file')
