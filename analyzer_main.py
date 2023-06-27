@@ -35,7 +35,7 @@ TIMESTAMP_TAG = '_timestamp'
 # Type of classification (binary or multiclass)
 BINARY_CLASSIFICATION = True
 # True if data has to be normalized before processing
-NORMALIZE = False
+NORMALIZE = True
 # verbosity level
 VERBOSE = 1
 
@@ -54,9 +54,6 @@ CLASSIFIERS = {'dt': DecisionTreeClassifier(),
                'sgd': SGDClassifier(),
                'mlp': Perceptron(),
                'lr': LogisticRegression(),
-               'knn_1': KNeighborsClassifier(n_neighbors=1),
-               'knn_3': KNeighborsClassifier(n_neighbors=3),
-               'knn_9': KNeighborsClassifier(n_neighbors=9),
                'st_stat': StackingClassifier(estimators=[('nb', GaussianNB()),
                                                          ('lda', LinearDiscriminantAnalysis()),
                                                          ('lr', LogisticRegression())],
@@ -187,7 +184,7 @@ if __name__ == '__main__':
             train_time = current_ms() - start_ms
 
             # Dump, reload and measure the size of the model
-            model_path = os.path.join(MODELS_FOLDER, clf_name + '_' + train_dataset_name + '.joblib')
+            model_path = os.path.join(MODELS_FOLDER, clf_name + '@' + train_dataset_name + '.joblib')
             joblib.dump(clf, model_path, compress=9)
             model_size = -1 if not os.path.exists(model_path) else os.stat(model_path).st_size
             clf = joblib.load(model_path)
