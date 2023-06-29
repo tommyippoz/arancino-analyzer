@@ -7,6 +7,7 @@ import sys
 import joblib
 import numpy
 import pandas
+import sklearn.metrics
 import sklearn.metrics as metrics
 import sklearn.model_selection as ms
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
@@ -94,7 +95,10 @@ if __name__ == '__main__':
 
     OUT_FILE = str(current_ms()) + '_output.csv'
     with open(OUT_FILE, 'w') as f:
-        f.write('clf,train_dataset,test_dataset,test_size,an_perc,test_time,acc,mcc\n')
+        if BINARY_CLASSIFICATION:
+            f.write('clf,train_dataset,test_dataset,test_size,an_perc,test_time,acc,mcc,tp,tn,fp,fn,fpr,p,r\n')
+        else:
+            f.write('clf,train_dataset,test_dataset,test_size,an_perc,test_time,acc,mcc\n')
 
     for file in os.listdir(DATASETS_FOLDER):
         if file.endswith(".csv"):
@@ -143,6 +147,13 @@ if __name__ == '__main__':
                                 f.write(clf_name + ',' + train_dataset + ',' + df_name + ',' + str(len(y_test))
                                         + ',' + str(an_perc) + ',' + str(test_time) + ','
                                         + str(metrics.accuracy_score(y_true=y_test, y_pred=y_pred))
-                                        + ',' + str(metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)) + '\n')
+                                        + ',' + str(metrics.matthews_corrcoef(y_true=y_test, y_pred=y_pred)))
+                                if BINARY_CLASSIFICATION:
+                                    [[tn, fn], [fp, tp]] = sklearn.metrics.confusion_matrix(y_true=y_test, y_pred=y_pred, labels=['normal', 'anomaly'])
+                                    f.write(',' + str(tp) + ',' + str(tn) + ',' + str(fp) + ',' + str(fn)
+                                            + ',' + str(1.0 * fp / (fp + tn))
+                                            + ',' + str(1.0 * tp / (fp + tp))
+                                            + ',' + str(1.0 * tp / (fn + tp)))
+                                f.write('\n')
                     except:
                         print('Something went wrong when loading the file')
